@@ -3,7 +3,7 @@ set -euo pipefail
 
 RIGHT_VOLUME="GO60RHBOOT"
 LEFT_VOLUME="GO60LHBOOT"
-DOWNLOADS_DIR="$HOME/Downloads"
+UF2_DIR="."
 POLL_INTERVAL=1
 COPY_RETRIES=10
 COPY_RETRY_DELAY=1
@@ -13,7 +13,7 @@ log() {
 }
 
 find_newest_uf2() {
-  find "$DOWNLOADS_DIR" -maxdepth 1 -type f -iname '*.uf2' -print0 |
+  find "$UF2_DIR" -maxdepth 1 -type f -iname '*.uf2' -print0 |
     xargs -0 stat -f '%m %N' 2>/dev/null |
     sort -nr |
     head -n 1 |
@@ -67,7 +67,7 @@ copy_latest_uf2_to_volume() {
   uf2_file="$(find_newest_uf2)"
 
   if [[ -z "${uf2_file:-}" || ! -f "$uf2_file" ]]; then
-    log "No .uf2 file found in $DOWNLOADS_DIR"
+    log "No .uf2 file found."
     exit 1
   fi
 
@@ -81,11 +81,23 @@ copy_latest_uf2_to_volume() {
       return 0
     fi
 
-    log "Copy attempt $attempt failed; retrying..."
+    # If the volume disappeared, the board likely accepted the UF2 and rebooted.
+    if [[ ! -d "$volume_path" ]]; then
+      log "$volume_name disappeared during copy; assuming flash succeeded."
+      return 0
+    fi
+
+    log "Copy attempt $attempt failed, but device is still mounted; retrying..."
     sleep "$COPY_RETRY_DELAY"
   done
 
-  log "Failed to copy to $volume_name after $COPY_RETRIES attempts."
+  # One final check before declaring failure.
+  if [[ ! -d "$volume_path" ]]; then
+    log "$volume_name disappeared after copy attempts; assuming flash succeeded."
+    return 0
+  fi
+
+  log "Copy failed and $volume_name is still mounted."
   exit 1
 }
 
