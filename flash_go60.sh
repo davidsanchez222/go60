@@ -5,6 +5,8 @@ RIGHT_VOLUME="GO60RHBOOT"
 LEFT_VOLUME="GO60LHBOOT"
 DOWNLOADS_DIR="$HOME/Downloads"
 POLL_INTERVAL=1
+COPY_RETRIES=10
+COPY_RETRY_DELAY=1
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -29,6 +31,22 @@ wait_for_volume() {
   log "$volume_name detected."
 }
 
+wait_for_writable_volume() {
+  local volume_name="$1"
+  local volume_path="/Volumes/$volume_name"
+  local testfile="$volume_path/.write_test_$$"
+
+  log "Waiting for $volume_name to become writable..."
+  while true; do
+    if [[ -d "$volume_path" ]] && touch "$testfile" 2>/dev/null; then
+      rm -f "$testfile"
+      log "$volume_name is writable."
+      return 0
+    fi
+    sleep "$POLL_INTERVAL"
+  done
+}
+
 wait_for_eject() {
   local volume_name="$1"
   local volume_path="/Volumes/$volume_name"
@@ -44,6 +62,7 @@ copy_latest_uf2_to_volume() {
   local volume_name="$1"
   local volume_path="/Volumes/$volume_name"
   local uf2_file
+  local attempt
 
   uf2_file="$(find_newest_uf2)"
 
@@ -54,16 +73,29 @@ copy_latest_uf2_to_volume() {
 
   log "Using UF2: $uf2_file"
   log "Copying to $volume_name..."
-  cp "$uf2_file" "$volume_path/"
-  sync
-  log "Copy finished for $volume_name."
+
+  for ((attempt=1; attempt<=COPY_RETRIES; attempt++)); do
+    if cp "$uf2_file" "$volume_path/firmware.uf2" 2>/dev/null; then
+      sync
+      log "Copy finished for $volume_name."
+      return 0
+    fi
+
+    log "Copy attempt $attempt failed; retrying..."
+    sleep "$COPY_RETRY_DELAY"
+  done
+
+  log "Failed to copy to $volume_name after $COPY_RETRIES attempts."
+  exit 1
 }
 
 wait_for_volume "$RIGHT_VOLUME"
+wait_for_writable_volume "$RIGHT_VOLUME"
 copy_latest_uf2_to_volume "$RIGHT_VOLUME"
 wait_for_eject "$RIGHT_VOLUME"
 
 wait_for_volume "$LEFT_VOLUME"
+wait_for_writable_volume "$LEFT_VOLUME"
 copy_latest_uf2_to_volume "$LEFT_VOLUME"
 wait_for_eject "$LEFT_VOLUME"
 
